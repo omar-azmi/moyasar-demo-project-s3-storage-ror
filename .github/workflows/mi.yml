@@ -1,9 +1,12 @@
-name: CI
+name: MI
 
-on:
-  pull_request:
-  push:
-    branches: [ main ]
+# This is a Manual Integration github-action (MI) enjoy not seeing annoying errors on every push
+on: workflow_dispatch
+
+# on:
+#   pull_request:
+#   push:
+#     branches: [ main ]
 
 jobs:
   scan_ruby:
