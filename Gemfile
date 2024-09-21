@@ -41,3 +41,7 @@ group :development, :test do
 end
 
 
+### Custom added gems
+
+# Testing library
+gem "rspec", "~> 3.13"
