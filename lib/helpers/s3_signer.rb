@@ -9,17 +9,12 @@ module S3Signer
   # thus, instead of having to `include` the module to get access to the module's functions,
   # you will be able to call the functions as a method of the module via `S3Signer.func_name`.
   extend self
-  
-  # We cannot declare the methods we do not wish to be used externally as `private`, as this module itself will lose access to those methods (they will appear as undefined in external module scope).
-  # private :crypto, :http_headers_to_string, :get_http_header_keys
 
-  # We can alias a module by converting it to a method `self.crypto`.
+  # We can alias a module by converting it to a private method `self.crypto`.
   # This is necessary, since local-variables, local-functions, and local-modules are not available in the module's exported scope.
   # i.e. when someone calls `S3Signer.get_signed_headers(...)`, the `get_signed_headers` method will not be aware of what `crypto` is if it was aliased as a variable via `crypto = CryptoHelper`.
   # However, by turning it into a module's method, it will be accessible to `get_signed_headers` when called from outside as a module method.
-  # The downside of this is of course that your `CryptoHelper` module is also exported publicly as a module method.
-  # TODO: there might be some semantics/conventions to label methods for internal use only, that do not use the `private` declaration (which in effect also  makes the method disappear/not-exist in external module use)
-  def crypto
+  private def crypto
     CryptoHelper
   end
 
@@ -34,7 +29,7 @@ module S3Signer
   #
   # @param headers [Hash] The http headers to normalize
   # @return [String] Normalized and formatted http headers
-  def http_headers_to_string(headers)
+  private def http_headers_to_string(headers)
     normalized_headers = headers
       .transform_keys(&:downcase)
       .transform_values(&:strip)
@@ -45,7 +40,7 @@ module S3Signer
   # Get the keys of http headers in sorted order
   # @param headers [Hash] The http headers object
   # @return [Array<String>] Sorted list of header keys
-  def get_http_header_keys(headers)
+  private def get_http_header_keys(headers)
     headers.keys.map(&:downcase).sort
   end
 
@@ -56,7 +51,7 @@ module S3Signer
   # @param secret_key [String] The same owner's valid S3 bucket secret key
   # @param config [Hash] Additional configuration for signing
   # @return [Hash] Signed headers including the "Authorization" field
-  def get_signed_headers(host, pathname, access_key, secret_key, config = {})
+  public def get_signed_headers(host, pathname, access_key, secret_key, config = {})
     # Default configuration
     config = {
       query: "",
@@ -123,4 +118,11 @@ module S3Signer
       .transform_keys(&:downcase)
       .merge("Authorization" => authorization_header)
   end
+
+  # We can declare the visibility of some methods as `private` if we wish for them not to be used externally outside of this module's block.
+  # Doing so will retain these methods available to this module's public methods.
+  # Since we have already prefixed the methods relevant methods using the `private` keyword, then there is no need for the alternate way of declaration below.
+  # private_class_method(:crypto, :http_headers_to_string, :get_http_header_keys)
+  # Do not that private methods are still available (directly in inline scope) to any module/class that performs an `include` of this module.
+  # Thus this gives use the benefit of being able to perform tests on the private methods of this module by including it (via `include S3Signer`).
 end
