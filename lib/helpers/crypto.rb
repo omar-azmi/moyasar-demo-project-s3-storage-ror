@@ -2,6 +2,8 @@
 require "openssl"
 
 module CryptoHelper
+  extend self
+
   # SHA-256 hash function
   # @param message [String] The message or binary to hash
   # @return [String] The SHA256 binary hash (as a binary string buffer)

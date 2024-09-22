@@ -5,7 +5,23 @@ require "uri"
 require_relative "./crypto"
 
 module S3Signer
-  include CryptoHelper
+  # `extend self` allows for all functions declared in the body of the module to become available as the module's methods.
+  # thus, instead of having to `include` the module to get access to the module's functions,
+  # you will be able to call the functions as a method of the module via `S3Signer.func_name`.
+  extend self
+  
+  # We cannot declare the methods we do not wish to be used externally as `private`, as this module itself will lose access to those methods (they will appear as undefined in external module scope).
+  # private :crypto, :http_headers_to_string, :get_http_header_keys
+
+  # We can alias a module by converting it to a method `self.crypto`.
+  # This is necessary, since local-variables, local-functions, and local-modules are not available in the module's exported scope.
+  # i.e. when someone calls `S3Signer.get_signed_headers(...)`, the `get_signed_headers` method will not be aware of what `crypto` is if it was aliased as a variable via `crypto = CryptoHelper`.
+  # However, by turning it into a module's method, it will be accessible to `get_signed_headers` when called from outside as a module method.
+  # The downside of this is of course that your `CryptoHelper` module is also exported publicly as a module method.
+  # TODO: there might be some semantics/conventions to label methods for internal use only, that do not use the `private` declaration (which in effect also  makes the method disappear/not-exist in external module use)
+  def crypto
+    CryptoHelper
+  end
 
   AWS4_REQUEST_SCOPE = "aws4_request"
 
@@ -58,7 +74,7 @@ module S3Signer
 
     payload_hash = case config[:payload]
     when String
-      buffer_to_hexstring(sha256(config[:payload]))
+      crypto.buffer_to_hexstring(crypto.sha256(config[:payload]))
     when Hash
       config[:payload][:sha256] || "UNSIGNED-PAYLOAD"
     else
@@ -90,14 +106,14 @@ module S3Signer
       algorithm,
       amz_date,
       credential_scope,
-      buffer_to_hexstring(sha256(canonical_request))
+      crypto.buffer_to_hexstring(crypto.sha256(canonical_request))
     ].join("\n")
 
     # Step 3: Calculate the Signing Key
-    signing_key = hmac_sha256_recursive("AWS4#{secret_key}", date_stamp, config[:region], config[:service], AWS4_REQUEST_SCOPE)
+    signing_key = crypto.hmac_sha256_recursive("AWS4#{secret_key}", date_stamp, config[:region], config[:service], AWS4_REQUEST_SCOPE)
 
     # Step 4: Calculate the Signature
-    signature = buffer_to_hexstring(hmac_sha256(signing_key, string_to_sign))
+    signature = crypto.buffer_to_hexstring(crypto.hmac_sha256(signing_key, string_to_sign))
 
     # Step 5: Create Authorization Header
     authorization_header = "#{algorithm} Credential=#{access_key}/#{credential_scope}, SignedHeaders=#{signed_headers}, Signature=#{signature}"

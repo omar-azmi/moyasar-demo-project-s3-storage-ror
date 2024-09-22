@@ -46,7 +46,8 @@ RSpec.describe S3Signer do
       original_headers = {
         "raNGe" => "bytes=0-9"
       }
-      signed_headers = get_signed_headers(sample_host, sample_pathname, sample_access_key, sample_secret_key, {
+      # We use the module method calling approach below to insure that the function also works in its module-method form.
+      signed_headers = S3Signer.get_signed_headers(sample_host, sample_pathname, sample_access_key, sample_secret_key, {
         method: "gET",
         payload: "",
         headers: original_headers,
