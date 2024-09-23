@@ -1,7 +1,5 @@
 
-require "openssl"
 require "time"
-require "uri"
 require_relative "./crypto"
 
 module S3Signer
@@ -14,6 +12,7 @@ module S3Signer
   # This is necessary, since local-variables, local-functions, and local-modules are not available in the module's exported scope.
   # i.e. when someone calls `S3Signer.get_signed_headers(...)`, the `get_signed_headers` method will not be aware of what `crypto` is if it was aliased as a variable via `crypto = CryptoHelper`.
   # However, by turning it into a module's method, it will be accessible to `get_signed_headers` when called from outside as a module method.
+  # @return [CryptoHelper]
   private def crypto
     CryptoHelper
   end

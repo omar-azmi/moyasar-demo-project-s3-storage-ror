@@ -44,4 +44,10 @@ end
 ### Custom added gems
 
 # Testing library
-gem "rspec", "~> 3.13"
+gem "rspec", "~> 3.13", require: false
+
+# Asynchronous task execution library (for promise like capabilities)
+gem "async", "~> 2.17", require: false
+
+# Ruby LSP
+gem "solargraph", "~> 0.50.0", group: :development

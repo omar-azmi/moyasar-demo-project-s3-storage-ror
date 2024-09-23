@@ -1,0 +1,25 @@
+---
+include:
+- "app/controllers/**/*.rb"
+- "app/services/**/*.rb"
+- "lib/helpers/**/*.rb"
+- "spec/helpers/**/*.rb"
+- "spec/services/**/*.rb"
+exclude:
+- "test/**/*"
+- "vendor/**/*"
+- ".bundle/**/*"
+require: []
+domains: []
+reporters:
+- rubocop
+- require_not_found
+formatter:
+  rubocop:
+    cops: safe
+    except: []
+    only: []
+    extra_args: []
+require_paths: []
+plugins: []
+max_files: 5000
