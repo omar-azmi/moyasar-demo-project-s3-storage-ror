@@ -64,9 +64,9 @@ RSpec.describe AsyncPromise do
       reason = nil
       Async do
         promise1 = AsyncPromise.new
-        promise2 = promise1.catch(->(e) { reason = e })
+        promise2 = promise1.catch(->(e) { reason = e; nil })
         promise1.reject("Rejected!")
-        promise2.wait # expect(promise2.wait).to be_nil() # TODO: why is this not nil? I don't recall assigning via `async_resolve(reason)` if there are children
+        expect(promise2.wait).to be_nil()
       end
       expect(reason).to eq("Rejected!")
     end
@@ -75,13 +75,12 @@ RSpec.describe AsyncPromise do
       reason = nil
       Async do
         promise1 = AsyncPromise.new
-        promise2 = promise1.catch(->(_) { }) # there must be at least one child that catches promise1's error, otherwise promise1 will raise it to top level.
         promise1.reject("Already Rejected!")
-        promise1.wait # expect(promise1.wait).to be_nil() # TODO: why is this not nil?
-        promise2.wait # expect(promise2.wait).to be_nil() # TODO: why is this not nil?
-        promise3 = promise1.catch(->(e) { reason = e })
-        expect(reason).to eq("Already Rejected!") # the new value should get assigned even before we wait for promise3, because its dependency, promise1, has already completed execution (rejected)
-        promise3.wait # expect(promise3.wait).to be_nil() # TODO: why is this not nil?
+        expect { promise1.wait }.to raise_error("Already Rejected!")
+        promise2 = promise1.catch(->(e) { reason = e; nil })
+        expect(reason).to eq("Already Rejected!") # the new value should get assigned even before we wait for promise2, because its dependency, promise1, has already completed execution (rejected)
+        expect(promise2.wait).to be_nil()
+        expect { promise1.wait }.to raise_error("Already Rejected!") # waiting for a failed promise again should raise the error again.
       end
       expect(reason).to eq("Already Rejected!")
     end
@@ -92,9 +91,9 @@ RSpec.describe AsyncPromise do
         promise1 = AsyncPromise.new
         promise2 = promise1
           .then(->(v) { "#{v} World" })
-          .catch(->(e) { reason = e })
+          .catch(->(e) { reason = e; nil })
         promise1.reject("Error occurred")
-        promise2.wait # expect(promise2.wait).to be_nil() # TODO: why is this not nil?
+        expect(promise2.wait).to be_nil()
       end
       expect(reason).to eq("Error occurred")
     end
@@ -105,9 +104,9 @@ RSpec.describe AsyncPromise do
         promise1 = AsyncPromise.new
         promise2 = promise1
           .then(->(_) { raise "Another Error" })
-          .catch(->(e) { reason = e })
+          .catch(->(e) { reason = e; nil })
         promise1.resolve("Initial")
-        promise2.wait # expect(promise2.wait).to be_nil() # TODO: why is this not nil?
+        expect(promise2.wait).to be_nil()
       end
       expect(reason.message).to eq("Another Error")
     end
@@ -156,14 +155,12 @@ RSpec.describe AsyncPromise do
       expect(reason).to be_nil()
     end
 
-    it "should throw error for unhandled rejections" do
+    it "should throw error for unhandled rejections when they are waited for" do
       Async do
         promise = AsyncPromise.new
         promise.reject("Unhandled Rejection")
-        expect {
-          # TODO: the error must be invoked only after we call the wait method (if there are not children to pass the errors to by then)
-          promise.wait
-        }.to raise_error("Unhandled Rejection")
+        # the error gets risen only after we call the wait method
+        expect { promise.wait }.to raise_error("Unhandled Rejection")
         end
     end
   end
@@ -383,7 +380,6 @@ RSpec.describe AsyncPromise do
     end
 
     it "should raise an error when error is not caught by an awaited promise" do
-      # TODO: currently fails. read the TODO comment right ahead.
       delta_time = Time.now
       final_value = nil
 
@@ -391,13 +387,10 @@ RSpec.describe AsyncPromise do
         promise1 = AsyncPromise.new(->(v) { sleep 0.3; v })
         promise2 = promise1
           .then(->(v) { sleep 0.5; raise "Step 1 failed" })
-          .then(->(v) { final_value = v; v })
+          .then(->(v) { final_value = v; v }, nil)
 
         promise1.resolve("Start Chain")
-        # TODO: uncaught exceptions should only be raised when the promise responsible for handling it is awaiten for.
-        #       right now, the error is a part of the `promise1.resolve("Start Chain")` stack call.
-        #       we must defer the uncaught error to `promise2`'s wait method, and not raise it immediately.
-        #       and for that, we will probably need to overload the `wait` method to add this error raising logic.
+        # uncaught exceptions should only be raised when the promise responsible for handling it is awaiten for.
         expect { promise2.wait }.to raise_error("Step 1 failed")
         delta_time = Time.now - delta_time
       end

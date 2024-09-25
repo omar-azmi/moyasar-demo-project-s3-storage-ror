@@ -5,6 +5,7 @@ require "async/variable"
 # and which child Promise nodes to propagate the output values of the resolver/rejector to.
 class AsyncPromise < Async::Variable
   alias_method :async_resolve, :resolve # rename the `Async::Variable.resolve` instance method to `async_resolve`, since we will be using the same method name for our own logic of resolving values.
+  alias_method :async_wait, :wait # rename the `Async::Variable.wait` instance method to `async_wait`, since we will need to tap into the waiting process to raise any errors that may have occurred during the process.
 
   # @param on_resolve [(value) => next_value_or_promise, nil] the function to call when the promise is resolved with a value.
   # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error).
@@ -124,6 +125,19 @@ class AsyncPromise < Async::Variable
     self.then(nil, on_reject)
   end
 
+  # Wait for the Promise to be resolved, or rejected.
+  # If the Promise was rejected, and you wait for it, then it will raise an error, which you will have to rescue externally.
+  # @returns [Any] The resolved value of type `T`.
+  # @raises [String | StandardError] The error/reason for the rejection of this Promise.
+  def wait
+    value = self.async_wait()
+    unless @reason.nil?
+      # if an error had existed for this promise, then we shall raise it now.
+      raise @reason
+    end
+    value
+  end
+
   # Get the status of the this Promise.
   # This should be used for debugging purposes only. your application logic MUST NOT depend on it, at all.
   # @return ["pending", "fulfilled", "rejected"] Represents the current state of this Promise node.
@@ -148,36 +162,15 @@ class AsyncPromise < Async::Variable
   private def handle_imminent_reject(reason)
     @status = "rejected"
     @reason = reason
-    Async do |task|
-      if @children.empty?
-        # if there are no children to pass on the responsibility of handling the error, then we must raise it at the global scope, since it is an unhandled error.
-        raise reason
-      else
-        # otherwise, we will pass the reason for rejection onto each dependent children (and each must handle it otherwise error exceptions will be raised).
+    # we are not going to raise the error here, irrespective of whether or not child promises are available.
+    # the error is intended to be ONLY risen when a rejected promise is awaited for via our overloaded `wait` method.
+    unless @children.empty?
+      # if there are child promises, we will pass the reason for rejection to each of them (and each must handle it, otherwise error exceptions will be raised when they are awaited for).
+      Async do |task|
         @children.each { |child_promise| child_promise.reject(reason) }
       end
     end
-    self.async_resolve(reason)  # Ensure the underlying `Async::Variable` is resolved, so that the async library can stop waiting for it.
+    self.async_resolve(nil)  # Ensure the underlying `Async::Variable` is resolved with a `nil`, so that the async library can stop waiting for it.
     nil
   end
 end
-
-
-
-# example usage
-# Async do
-#   p1 = AsyncPromise.new
-#   p2 = p1.then(->(v) { puts "Resolved to #{v}"; "Next Value" })
-#          .catch(->(e) { puts "Caught error: #{e}" })
-
-#   # resolving the promise asynchronously
-#   Async do
-#     sleep 1
-#     p1.reject("First Error")
-#     p1.resolve("Second Value")
-#     p1.reject("Third Error")
-#   end
-
-#   # waiting for the result
-#   p2.wait # prints "Caught error: First Error"
-# end
