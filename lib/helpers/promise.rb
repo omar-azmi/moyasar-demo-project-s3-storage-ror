@@ -24,6 +24,11 @@ class Promise
 
   # TODO: consider adding `self.resolve` and `self.reject` class static methods to `Promise`, such that calling `Promise.reject` will not
   #       immediately raise an error to the top (i.e. we will rescue it within the method's block, so that it doesn't bubble outside to the top)
+  # TODO: consider adding an additional optional parameter to the `reject` method for a callback that is called when an uncaught error bubbles all the way to the top.
+  #       the callback will also be inheritable by the children of this Promise node.
+  #       this will allow for 2 things:
+  #         1) simplifying the process of discovering which promise had failed at catching the error
+  #         2) allowing us to silence the error or take an alternate action
 
   # Resolve the value of this Promise node.
   # @param value [Any, Promise<Any>] Generic value of type `T`.
@@ -39,20 +44,16 @@ class Promise
       )
     else
       # otherwise, since we have an actual resolved value at hand, we may now pass it onto the dependent children.
-      error_reason = nil
       begin
         value = @on_resolve.nil? \
           ? value
           : @on_resolve.call(value) # it's ok if `@on_resolve` returns another promise object, because the children will then lach on to its promise when their `resolve` method is called.
-      rescue => err
-        error_reason = err
-      end
-      if error_reason.nil?
-        # no errors occurred after running the `@on_resolve` function. we may now resolve the children.
-        self.handle_imminent_resolve(value)
-      else
+      rescue => error_reason
         # some uncaught error occurred while running the `@on_resolve` function. we should now reject this (self) promise, and pass the responsibility of handling to the children (if any).
         self.handle_imminent_reject(error_reason)
+      else
+        # no errors occurred after running the `@on_resolve` function. we may now resolve the children.
+        self.handle_imminent_resolve(value)
       end
     end
     nil
@@ -66,25 +67,22 @@ class Promise
 
     # since there has been an error, we must call the `@on_reject` method to see if it handles it appropriately (by not raising another error and giving a return value).
     # if there is no `on_reject` available, we will just have to continue with the error propagation to the children.
-    new_error_reason = nil
-    new_handled_value = nil
-    begin
-      if @on_reject.nil?
-        new_error_reason = reason
-      else
-        new_handled_value = @on_reject.call(reason)
-      end
-    rescue => err
-      new_error_reason = err
-    end
-
-    # we will now see if a new value has been acquired, or if the error persisted
-    if new_error_reason.nil?
-      # the `@on_reject` function handled the error appropriately and returned a value, so we may now resolve the children with that new value
-      self.handle_imminent_resolve(new_handled_value)
+    if @on_reject.nil?
+      # no rejection handler exists, thus the children must bear the responsibility of handling the error
+      self.handle_imminent_reject(reason)
     else
-      # the error persisted, and we must now pass on the responsibility of handling it
-      self.handle_imminent_reject(new_error_reason)
+      # an `@on_reject` handler exists, so lets see if it can reolve the current error with a value.
+      new_handled_value = nil
+      begin
+        new_handled_value = @on_reject.call(reason)
+      rescue => new_error_reason
+        # a new error occurred in the `@on_reject` handler, resulting in no resolvable value.
+        # we must now pass on the responsibility of handling it to the children.
+        self.handle_imminent_reject(new_error_reason)
+      else
+        # the `@on_reject` function handled the error appropriately and returned a value, so we may now resolve the children with that new value.
+        self.handle_imminent_resolve(new_handled_value)
+      end
     end
     nil
   end
@@ -116,6 +114,9 @@ class Promise
     self.then(nil, on_reject)
   end
 
+  # Get the status of the this Promise.
+  # This should be used for debugging purposes only. your application logic MUST NOT depend on it, at all.
+  # @return ["pending", "fulfilled", "rejected"] Represents the current state of this Promise node.
   def status
     @status
   end
@@ -144,26 +145,3 @@ class Promise
     nil
   end
 end
-
-
-# Example usage
-# a = Promise.new
-# b = a.then(->(v) { puts "1 #{v}" }, ->(v) { puts "2 #{v}"; raise StandardError.new("ErrorZ") })
-# c = b.catch(->(v) { puts "3 #{v}"; "Hello" }).then(->(v) { puts "4 #{v}" })
-# d = a.catch(->(v) { }) # `d` will not result in an error, since it has been captured
-
-# the following rescuing does not work, because immediately during declaration, there is not error. it only happens later on when you reject.
-# infact, the error handling must be wrapped around `a.reject("Reason For Error = Known")` to prevent it from bubbling to top level.
-# begin
-#   e = a.catch()
-# rescue err
-#   puts "e was up to no good, for reason: #{err}" # does not get printed
-# end
-
-# a.reject("Reason For Error = Known")
-
-# output:
-# > 2 Reason For Error = Known
-# > 3 ErrorZ
-# > 4 Hello
-# > `handle_imminent_reject': Reason For Error = Known (RuntimeError)
