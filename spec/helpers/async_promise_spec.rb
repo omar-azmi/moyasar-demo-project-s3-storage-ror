@@ -166,6 +166,120 @@ RSpec.describe AsyncPromise do
   end
 
 
+  ### Testing static methods of the class
+  context "Static Methods" do
+    describe "AsyncPromise.resolve" do
+      it "creates a promise that resolves immediately with a given value" do
+        result = nil
+        Async do
+          promise = AsyncPromise.resolve("Resolved Value")
+          promise.then(->(v) { result = v }).wait
+        end
+        expect(result).to eq("Resolved Value")
+      end
+
+      it "handles a resolved AsyncPromise passed into .resolve" do
+        result = nil
+        Async do
+          inner_promise = AsyncPromise.resolve("Inner Resolved")
+          promise = AsyncPromise.resolve(inner_promise)
+          promise.then(->(v) { result = v }).wait
+        end
+        expect(result).to eq("Inner Resolved")
+      end
+
+      it "handles a nil value in .resolve" do
+        result = "not_nil"
+        Async do
+          promise = AsyncPromise.resolve(nil)
+          promise.then(->(v) { result = v }).wait
+        end
+        expect(result).to be_nil
+      end
+    end
+
+    describe "AsyncPromise.reject" do
+      it "creates a promise that rejects immediately with a given reason" do
+        rejection_reason = nil
+        Async do
+          promise = AsyncPromise.reject("Rejection Reason")
+          promise.catch(->(e) { rejection_reason = e }).wait
+        end
+        expect(rejection_reason).to eq("Rejection Reason")
+      end
+
+      it "handles rejection of an AsyncPromise in .reject" do
+        rejection_reason = nil
+        Async do
+          promise = AsyncPromise.reject(StandardError.new("Error occurred"))
+          promise.catch(->(e) { rejection_reason = e.message }).wait
+        end
+        expect(rejection_reason).to eq("Error occurred")
+      end
+    end
+
+    describe "AsyncPromise.all" do
+      it "resolves when all promises resolve, and maintains the order of the promises" do
+        Async do
+          # Resolve all promises in different orders
+          p1 = AsyncPromise.resolve("Value 1").then(->(v) { sleep 0.3; v })
+          p2 = AsyncPromise.resolve("Value 2").then(->(v) { sleep 0.1; v })
+          p3 = AsyncPromise.resolve("Value 3").then(->(v) { sleep 0.2; v })
+          p4 = AsyncPromise.all([ p1, p2, p3 ])
+          expect(p4.wait).to eq([ "Value 1", "Value 2", "Value 3" ])
+        end
+      end
+
+      it "rejects if any promise rejects" do
+        rejection_reason = nil
+        Async do
+          # Resolve two, reject one
+          p1 = AsyncPromise.resolve("Value 1").then(->(v) { sleep 0.1; v })
+          p2 = AsyncPromise.reject("Rejection Reason").catch(->(e) { sleep 0.3; raise e })
+          p3 = AsyncPromise.resolve("Value 3").then(->(v) { sleep 0.2; v })
+          p4 = AsyncPromise.all([ p1, p2, p3 ]).catch(->(reason) { rejection_reason = reason.message; raise reason })
+          expect { p4.wait }.to raise_error("Rejection Reason")
+        end
+        expect(rejection_reason).to eq("Rejection Reason")
+      end
+
+      it "handles an empty array of promises and resolves immediately" do
+        result = nil
+        Async do
+          p1 = AsyncPromise.all([])
+          p2 = p1.then(->(values) { result = values })
+          expect(result).to eq([]) # the value should be resolved even before we begin to wait
+          expect(p2.wait).to eq([])
+        end
+      end
+
+      it "handles already resolved promises in .all" do
+        result = nil
+        Async do
+          p1 = AsyncPromise.resolve("Resolved 1")
+          p2 = AsyncPromise.resolve("Resolved 2")
+          p3 = AsyncPromise.resolve("Resolved 3")
+          p4 = AsyncPromise.all([ p1, p2, p3 ]).then(->(values) { result = values })
+          expect(result).to eq([ "Resolved 1", "Resolved 2", "Resolved 3" ]) # the value should be resolved even before we begin to wait
+          expect(p4.wait).to eq([ "Resolved 1", "Resolved 2", "Resolved 3" ])
+        end
+      end
+
+      it "immediately rejects if any of the promises are already rejected" do
+        rejection_reason = nil
+        Async do
+          p1 = AsyncPromise.resolve("Resolved 1")
+          p2 = AsyncPromise.reject("Immediate Rejection")
+          p3 = AsyncPromise.resolve("Resolved 3")
+          p4 = AsyncPromise.all([ p1, p2, p3 ]).catch(->(reason) { rejection_reason = reason; raise reason })
+          expect(rejection_reason).to eq("Immediate Rejection") # the value should be rejected, even before we begin to wait
+          expect { p4.wait }.to raise_error("Immediate Rejection")
+        end
+      end
+    end
+  end
+
+
   ### Testing for Asynchronous behavior
   context "Asynchronous Behavior" do
     it "should resolve two independent promises concurrently" do

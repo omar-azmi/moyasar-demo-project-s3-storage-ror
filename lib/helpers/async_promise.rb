@@ -20,7 +20,7 @@ class AsyncPromise < Async::Variable
     #   this value is kept purely for the sake of providing latecomer-then calls with a resolve value (if the `@status` was "fulfilled")
     #   a latecomer is when a call to the [then] or [catch] method is made after the promise has already been "fulfilled".
     @value = nil
-    # @type [String | StandardError] the error reason that will be assigned to this node when it is rejected.
+    # @type [String, StandardError] the error reason that will be assigned to this node when it is rejected.
     #   this value is kept purely for the sake of providing latecomer-then calls with a rejection reason (if the `@status` was "rejected")
     #   a latecomer is when a call to the [then] or [catch] method is made after the promise has already been "rejected".
     @reason = nil
@@ -28,13 +28,63 @@ class AsyncPromise < Async::Variable
     @on_reject = on_reject
   end
 
-  # TODO: consider adding `self.resolve` and `self.reject` class static methods to `Promise`, such that calling `Promise.reject` will not
-  #       immediately raise an error to the top (i.e. we will rescue it within the method's block, so that it doesn't bubble outside to the top)
+  # Create a new AsyncPromise that is already resolved with the provided [value] of type `T`.
+  # @param value [T, AsyncPromise<T>] Generic value of type `T`.
+  # return [AsyncPromise<T>] The newly created (and resolved) promise is returned.
+  # TODO: create unit test, and maybe reduce the amount of pre-resolved promises you create in your tests through the use of this
+  def self.resolve(value = nil)
+    new_promise = new()
+    new_promise.resolve(value)
+    new_promise
+  end
+
+  # Create a new AsyncPromise that is already rejected with the provided [reason].
+  # WARNING: Do not pass a `nil` as the reason, because it will break the error handling logic, since it will seem to it like there was no error.
+  # @param reason [String, StandardError] Give the reason for rejection.
+  # return [AsyncPromise<nil>] The newly created (and rejected) promise is returned.
+  # TODO: create unit test, and maybe reduce the amount of pre-resolved rejects you create in your tests through the use of this
+  def self.reject(reason = "AsyncPromise error")
+    new_promise = new()
+    new_promise.reject(reason)
+    new_promise
+  end
+
+  # Create a new AsyncPromise that resolves when all of its input promises have been resolved, and rejects when any single input promise is rejected.
+  # @param promises [Array<[T, AsyncPromise<T>]>] Provide all of the input AsyncPromise<T> to wait for, in order to resolve.
+  # return [AsyncPromise<Array<T>>] Returns a Promise which, when resolved, contains the array of all resolved values.
+  # TODO: create unit test
+  def self.all(promises = [])
+    # we must return early on if no promises we given, since nothing will then resolve the new_promise.
+    return self.resolve([]) if promises.empty?
+
+    new_promise = new()
+    resolved_values = []
+    remaining_promises = promises.length
+
+    # The following may not be the prettiest implementation. TODO: consider if you can use a Array.map for this function
+    promises.each_with_index do |promise, index|
+      promise.then(->(value) {
+        resolved_values[index] = value
+        remaining_promises -= 1
+        if remaining_promises == 0
+          new_promise.resolve(resolved_values)
+        end
+      }, ->(reason) {
+        # if there is any rejected dependency promise, we should immediately reject our new_promise
+        # note that this is somewhat of a error-racing scenario, since the new promise will be rejected due to the first error it encounters.
+        # i.e. its order can vary from time to time, possibly resulting in different kinds of rejection reasons
+        new_promise.reject(reason)
+      })
+    end
+    new_promise
+  end
+
+  # TODO: implement `AsyncPromise.allSettled` static method
 
   # Resolve the value of this AsyncPromise node.
-  # @param value [Any, AsyncPromise<Any>] Generic value of type `T`.
+  # @param value [T, AsyncPromise<T>] Generic value of type `T`.
   # return [void] nothing is returned.
-  def resolve(value)
+  def resolve(value = nil)
     return nil if @status != "pending" # if the promise is already fulfilled or rejected, return immediately
 
     Async do |task|
@@ -64,6 +114,7 @@ class AsyncPromise < Async::Variable
   end
 
   # Reject the value of this AsyncPromise node with an optional error reason.
+  # WARNING: Do not pass a `nil` as the reason, because it will break the error handling logic, since it will seem to it like there was no error.
   # @param reason [String, StandardError] The error to pass on to the next series of dependant promises.
   # return [void] nothing is returned.
   def reject(reason = "AsyncPromise error")
@@ -128,7 +179,7 @@ class AsyncPromise < Async::Variable
   # Wait for the Promise to be resolved, or rejected.
   # If the Promise was rejected, and you wait for it, then it will raise an error, which you will have to rescue externally.
   # @returns [Any] The resolved value of type `T`.
-  # @raises [String | StandardError] The error/reason for the rejection of this Promise.
+  # @raise [String, StandardError] The error/reason for the rejection of this Promise.
   def wait
     value = self.async_wait()
     unless @reason.nil?
