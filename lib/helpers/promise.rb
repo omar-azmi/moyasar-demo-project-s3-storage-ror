@@ -1,20 +1,20 @@
 
-# A [PromiseThenNode] (of generic type `T`) holds necessary information about what should be executed when the promise is resolved or rejected,
-# and which child Promise nodes to propagate the output values of the resolver/rejector to/
-class PromiseThenNode
-  # @param on_resolve [(value) => next_value_or_promise, nil] the function to call when the promise is resolved with a value
-  # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error)
+# A [Promise] (of generic type `T`) holds necessary information about what should be executed when the promise is resolved or rejected,
+# and which child Promise nodes to propagate the output values of the resolver/rejector to.
+class Promise
+  # @param on_resolve [(value) => next_value_or_promise, nil] the function to call when the promise is resolved with a value.
+  # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error).
   def initialize(on_resolve = nil, on_reject = nil)
     # @type ["pending", "fulfilled", "rejected"] Represents the current state of this Promise node.
     @status = "pending"
-    # @type [Array<PromiseThenNode>] An array of child Promise nodes that will be notified when this promise resolves.
+    # @type [Array<Promise>] An array of child [Promise] nodes that will be notified when this promise resolves.
     #   the resulting structure is a tree-like, and we shall traverse them in DFS (depth first search).
     @children = []
-    # the value of type `T` that will be assigned to this node when it resolves.
+    # @type [Any] the value of type `T` that will be assigned to this node when it resolves.
     #   this value is kept purely for the sake of providing latecomer-then calls with a resolve value (if the `@status` was "fulfilled")
     #   a latecomer is when a call to the [then] or [catch] method is made after the promise has already been "fulfilled".
     @value = nil
-    # the error reason that will be assigned to this node when it is rejected.
+    # @type [String | StandardError] the error reason that will be assigned to this node when it is rejected.
     #   this value is kept purely for the sake of providing latecomer-then calls with a rejection reason (if the `@status` was "rejected")
     #   a latecomer is when a call to the [then] or [catch] method is made after the promise has already been "rejected".
     @reason = nil
@@ -22,13 +22,16 @@ class PromiseThenNode
     @on_reject = on_reject
   end
 
+  # TODO: consider adding `self.resolve` and `self.reject` class static methods to `Promise`, such that calling `Promise.reject` will not
+  #       immediately raise an error to the top (i.e. we will rescue it within the method's block, so that it doesn't bubble outside to the top)
+
   # Resolve the value of this Promise node.
-  # @param value [Any, PromiseThenNode<Any>] Generic value of type `T`.
-  # return [void] nothing is returned
+  # @param value [Any, Promise<Any>] Generic value of type `T`.
+  # return [void] nothing is returned.
   def resolve(value)
     return nil if @status != "pending"
 
-    if value.is_a?(PromiseThenNode)
+    if value.is_a?(Promise)
       # if the provided value itself is a promise, then this (self) promise will need to become dependant on it.
       value.then(
         ->(resolved_value) { self.resolve(resolved_value); resolved_value },
@@ -47,15 +50,9 @@ class PromiseThenNode
       if error_reason.nil?
         # no errors occurred after running the `@on_resolve` function. we may now resolve the children.
         self.handle_imminent_resolve(value)
-        # @status = "fulfilled"
-        # @value = value
-        # @children.each(->(child_promise) { child_promise.resolve(value) })
       else
         # some uncaught error occurred while running the `@on_resolve` function. we should now reject this (self) promise, and pass the responsibility of handling to the children (if any).
         self.handle_imminent_reject(error_reason)
-        # TODO: the technique commented below will be problematic, because it means that errors will flow from `on_resolve` to `on_reject` adjacently,
-        #       so overall it will look like a zigzag. but in reality, the flow should be like a criscross/diagonals and straight lines.
-        # self.reject(error_reason)
       end
     end
     nil
@@ -63,7 +60,7 @@ class PromiseThenNode
 
   # Reject the value of this Promise node with an optional error reason.
   # @param reason [String, StandardError] The error to pass on to the next series of dependant promises.
-  # return [void] nothing is returned
+  # return [void] nothing is returned.
   def reject(reason = "Promise error")
     return nil if @status != "pending"
 
@@ -85,28 +82,16 @@ class PromiseThenNode
     if new_error_reason.nil?
       # the `@on_reject` function handled the error appropriately and returned a value, so we may now resolve the children with that new value
       self.handle_imminent_resolve(new_handled_value)
-      # @status = "fulfilled"
-      # @value = new_handled_value
-      # @children.each(->(child_promise) { child_promise.resolve(value) })
     else
       # the error persisted, and we must now pass on the responsibility of handling it
       self.handle_imminent_reject(new_error_reason)
-      # @status = "rejected"
-      # @reason = new_error_reason
-      # if @children.empty?
-      #   # if there are no children to pass on the responsibility of handing the error, then we must raise it at the global scope, since it is an unhandled error.
-      #   raise new_error_reason
-      # else
-      #   # otherwise, we will pass the reason for rejection onto each dependent children (and each must handle it otherwise error exceptions will be raised).
-      #   @children.each(->(child_promise) { child_promise.reject(new_error_reason) })
-      # end
     end
     nil
   end
 
-  # @param on_resolve [(value) => next_value_or_promise, nil] the function to call when the promise is resolved with a value
-  # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error)
-  # @return [PromiseThenNode] returns a new promise, so that multiple [then] and [catch] calls can be chained.
+  # @param on_resolve [(value) => next_value_or_promise, nil] the function to call when the promise is resolved with a value.
+  # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error).
+  # @return [Promise] returns a new promise, so that multiple [then] and [catch] calls can be chained.
   def then(on_resolve = nil, on_reject = nil)
     chainable_promise = self.class.new(on_resolve, on_reject)
     case @status
@@ -126,7 +111,7 @@ class PromiseThenNode
   # A catch method is supposed to rescue any rejections that are made by the parent promise.
   # it is syntactically equivalent to a `self.then(nil, on_reject)` call.
   # @param on_reject [(reason) => next_value_or_promise, nil] the function to call when the promise is rejected (either manually or due to a raised error).
-  # @return [PromiseThenNode] returns a new promise, so that multiple [then] and [catch] calls can be chained.
+  # @return [Promise] returns a new promise, so that multiple [then] and [catch] calls can be chained.
   def catch(on_reject = nil)
     self.then(nil, on_reject)
   end
@@ -135,6 +120,8 @@ class PromiseThenNode
     @status
   end
 
+  # Provide a final resolved value for this promise node.
+  # @param value [Any] the final resolved value to commit to.
   private def handle_imminent_resolve(value)
     @status = "fulfilled"
     @value = value
@@ -142,6 +129,8 @@ class PromiseThenNode
     nil
   end
 
+  # Provide a final rejection reason/error for this promise node.
+  # @param value [String, StandardError] the final error/reason for rejection to commit to.
   private def handle_imminent_reject(reason)
     @status = "rejected"
     @reason = reason
@@ -156,6 +145,25 @@ class PromiseThenNode
   end
 end
 
-# a = PromiseThenNode.new
 
-# b = a.then(->(v) { puts "1 #{v}" }, ->(v) { puts "2 #{v}" })
+# Example usage
+# a = Promise.new
+# b = a.then(->(v) { puts "1 #{v}" }, ->(v) { puts "2 #{v}"; raise StandardError.new("ErrorZ") })
+# c = b.catch(->(v) { puts "3 #{v}"; "Hello" }).then(->(v) { puts "4 #{v}" })
+# d = a.catch(->(v) { }) # `d` will not result in an error, since it has been captured
+
+# the following rescuing does not work, because immediately during declaration, there is not error. it only happens later on when you reject.
+# infact, the error handling must be wrapped around `a.reject("Reason For Error = Known")` to prevent it from bubbling to top level.
+# begin
+#   e = a.catch()
+# rescue err
+#   puts "e was up to no good, for reason: #{err}" # does not get printed
+# end
+
+# a.reject("Reason For Error = Known")
+
+# output:
+# > 2 Reason For Error = Known
+# > 3 ErrorZ
+# > 4 Hello
+# > `handle_imminent_reject': Reason For Error = Known (RuntimeError)
