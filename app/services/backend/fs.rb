@@ -86,11 +86,12 @@ class FsBackendSocket < StorageBackendSocket
   # @return [AsyncPromise<StorageObjectMetadata>]
   def get_object_metadata(id)
     self.is_ready.then(->(_) {
-      meta = @meta_table[id]
-      if meta.nil?
+      metadata = @meta_table[id]
+      if metadata.nil?
         raise BackendNetworkError.new("Metadata for id #{id} does not exist")
       end
-      StorageObjectMetadata.new(meta["id"], meta["size"], meta["created_at"])
+      metadata.transform_keys(&:to_sym) => {file:, **meta}
+      meta
     })
   end
 
@@ -110,11 +111,11 @@ class FsBackendSocket < StorageBackendSocket
   # @return [AsyncPromise<String>]
   def get_object(id)
     self.is_ready.then(->(_) {
-      meta = @meta_table[id]
-      if meta.nil?
+      metadata = @meta_table[id]
+      if metadata.nil?
         raise BackendNetworkError.new("Metadata for id #{id} does not exist.")
       end
-      file_path = File.expand_path(meta["file"], @config[:root])
+      file_path = File.expand_path(metadata["file"], @config[:root])
       file_content = File.binread(file_path)
       file_content
     })
@@ -132,13 +133,14 @@ class FsBackendSocket < StorageBackendSocket
       file_path = File.expand_path(file_name, @config[:root])
       File.binwrite(file_path, data) # writing binary data to the file
       metadata = {
-        "id" => id,
-        "size" => data.size,
-        "created_at" => Time.now.to_i * 1000,
-        "file" => file_name
+        id: id,
+        size: data.size,
+        created_at: Time.now.to_i * 1000,
+        file: file_name
       }
-      @meta_table[id] = metadata
-      StorageObjectMetadata.new(metadata["id"], metadata["size"], metadata["created_at"])
+      @meta_table[id] = metadata.transform_keys(&:to_s)
+      metadata => {file:, **meta}
+      meta
     })
   end
 
@@ -146,11 +148,11 @@ class FsBackendSocket < StorageBackendSocket
   # @return [AsyncPromise<Boolean>]
   def del_object(id)
     self.is_ready.then(->(_) {
-      meta = @meta_table[id]
-      if meta.nil?
+      metadata = @meta_table[id]
+      if metadata.nil?
         raise BackendNetworkError.new("Metadata for id #{id} does not exist.")
       end
-      file_path = File.expand_path(meta["file"], @config[:root])
+      file_path = File.expand_path(metadata["file"], @config[:root])
       File.delete(file_path) if File.exist?(file_path)
       @meta_table.delete(id)
       true
@@ -170,7 +172,7 @@ class FsBackendSocket < StorageBackendSocket
       # first initiate the file_counter if it not already known.
       # for this, we will read the meta_table and find the largest numeric file name (inside the fs) that is stored.
       if @file_counter.nil?
-        max_file_number = @meta_table.map { |_, meta| meta["file"].to_i }.max || 0
+        max_file_number = @meta_table.map { |id, meta| meta["file"].to_i }.max || 0
         @file_counter = max_file_number
       end
       @file_counter
