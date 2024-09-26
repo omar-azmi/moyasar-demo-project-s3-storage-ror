@@ -1,6 +1,5 @@
 require "async"
 require "net/http"
-require "./app/services/backend/base"
 require "./app/services/backend/s3"
 
 

@@ -1,5 +1,3 @@
-
-require "async"
 require "./lib/helpers/async_promise"
 
 # Configure the Async logger to always be disabled, so that it does not log unhandled errors that are supposed to bubble up to the parent reactor.
@@ -99,9 +97,6 @@ StorageObjectId = String
 
 # The raw data blob of any storage object
 StorageObjectData = String # or Binary/IO, depending on how the data will be handled
-
-# The base64-encoded version of StorageObjectData, embeddable in JSON
-StorageObjectData64 = String
 
 # Metadata for storage objects
 class StorageObjectMetadata

@@ -1,8 +1,8 @@
 require "async"
 require "async/task"
 require "time"
-require "./lib/helpers/async_promise"
 require "./app/services/backend/base"
+require "./lib/helpers/async_promise"
 
 
 RSpec.describe StorageBackendSocket do

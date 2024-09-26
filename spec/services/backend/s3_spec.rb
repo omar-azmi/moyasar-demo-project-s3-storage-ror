@@ -1,6 +1,5 @@
 require "async"
 require "net/http"
-require "./app/services/backend/base"
 require "./app/services/backend/s3"
 
 
@@ -49,7 +48,7 @@ RSpec.describe S3BackendSocket do
         Async do
           socket.set_object(new_object_id, new_object_data).wait => {id:, size:, created_at:}
           expect(id).to eq(new_object_id)
-          expect(size).to eq(new_object_data.length)
+          expect(size).to eq(new_object_data.bytesize)
           expect(created_at).to be_a(Numeric)
         end
       end
@@ -67,12 +66,19 @@ RSpec.describe S3BackendSocket do
         Async do
           socket.get_object_metadata(new_object_id).wait => {id:, size:, created_at:}
           expect(id).to eq(new_object_id)
-          expect(size).to eq(new_object_data.length)
+          expect(size).to eq(new_object_data.bytesize)
           expect(created_at).to be_a(Numeric)
         end
       end
     end
 
+    describe "S3BackendSocket.get_object" do
+      it "should retrieve the object's data back from server" do
+        Async do
+          expect(socket.get_object(new_object_id).wait).to eq(new_object_data)
+        end
+      end
+    end
 
     describe "S3BackendSocket.del_object" do
       it "should delete the object associated with the id" do

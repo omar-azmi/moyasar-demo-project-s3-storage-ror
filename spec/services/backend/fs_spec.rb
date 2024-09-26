@@ -1,6 +1,5 @@
 require "async"
 require "json"
-require "./app/services/backend/base"
 require "./app/services/backend/fs"
 
 # Make change to RSpec config to run tests in the order they are defined

@@ -1,5 +1,6 @@
 require "fileutils"
 require "json"
+require_relative "./base"
 
 
 # FsBackendSocketConfig struct for filesystem config
@@ -9,8 +10,8 @@ FsBackendSocketConfig = Struct.new(:root, :meta_table, :timeout)
 
 # Default configuration for the filesystem backend
 DEFAULT_FS_CONFIG = FsBackendSocketConfig.new(
-  "./storages/fs/",
-  "./storages/fs/_meta.json",
+  "./storage/fs/",
+  "./storage/fs/_meta.json",
   5.0,
 )
 
@@ -134,8 +135,8 @@ class FsBackendSocket < StorageBackendSocket
       File.binwrite(file_path, data) # writing binary data to the file
       metadata = {
         id: id,
-        size: data.size,
-        created_at: Time.now.to_i * 1000,
+        size: data.bytesize,
+        created_at: (Time.now.to_f * 1000).to_i,
         file: file_name
       }
       @meta_table[id] = metadata.transform_keys(&:to_s)
@@ -145,6 +146,7 @@ class FsBackendSocket < StorageBackendSocket
   end
 
   # Deletes an object by its ID
+  # for internal testing purposes only
   # @return [AsyncPromise<Boolean>]
   def del_object(id)
     self.is_ready.then(->(_) {
@@ -186,6 +188,9 @@ class FsBackendSocket < StorageBackendSocket
 
   # Ensure file existence, else create it (along with any intermediate folders required)
   private def ensure_file(path)
-    FileUtils.touch(path) unless File.exist?(path)
+    unless File.exist?(path)
+      self.ensure_dir(File.dirname(path))
+      FileUtils.touch(path)
+    end
   end
 end

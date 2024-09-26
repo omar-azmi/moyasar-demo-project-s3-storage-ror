@@ -191,7 +191,7 @@ class S3BackendSocket < StorageBackendSocket
         # extract object size and creation date from xml response body
         size = response.body.match(/<ObjectSize>(\d+)<\/ObjectSize>/)[1].to_i
         last_modified = response["last-modified"]
-        created_at = Time.parse(last_modified).to_i * 1000
+        created_at = (Time.parse(last_modified).to_f * 1000).to_i
         { id: id, size: size, created_at: created_at }
       })
     ])
