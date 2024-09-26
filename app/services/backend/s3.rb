@@ -118,22 +118,21 @@ class S3BackendSocket < StorageBackendSocket
     config = config.is_a?(S3BackendSocketConfig) ? config.to_h() : config
     # @type [S3BackendSocketConfig]
     @config = DEFAULT_S3_CONFIG.to_h.merge(config)
-    # @type [AsyncPromise<true>]
-    @is_ready = AsyncPromise.new()
+    self.is_ready = AsyncPromise.new()
     self.init()
   end
 
   # Initializes the minio backend server, and flicks `is_ready` promise to a resolved state when server booting is successful.
   # @return [AsyncPromise<void>]
   def init
-    @is_ready = AsyncPromise.new()
+    self.is_ready = AsyncPromise.new()
     AsyncPromise.resolve().then(->(_) {
       begin
         MinIO.bootup().wait
         MinIO.is_bucket_available(@config).wait
-        @is_ready.resolve(true)
+        self.is_ready.resolve(true)
       rescue StandardError => reason
-        @is_ready.reject(BackendNetworkError.new("Failed to initialize: #{reason.message}"))
+        self.is_ready.reject(BackendNetworkError.new("Failed to initialize: #{reason.message}"))
       end
     })
   end
@@ -148,7 +147,7 @@ class S3BackendSocket < StorageBackendSocket
   # @return [AsyncPromise<void>]
   def close
     AsyncPromise.resolve().then(->(_) {
-      @is_ready = AsyncPromise.reject("MinIO server has been shut down.")
+      self.is_ready = AsyncPromise.reject("MinIO server has been shut down.")
       MinIO.shutdown().wait
     })
   end
@@ -156,20 +155,22 @@ class S3BackendSocket < StorageBackendSocket
   # Checks if the minio backend server is online, and returns a promise for the latency in  milliseconds
   # @return [AsyncPromise<nil, Float>]
   def is_online
-    AsyncPromise.resolve()
-      .then(->(_) {
-        is_ready.wait
-        delta_time = Time.now
-        bucket_is_online = MinIO.is_bucket_available(@config).wait
-        delta_time = Time.now - delta_time
-        bucket_is_online \
-          ? delta_time * 1000 # latency in milliseconds
-          : nil
-      })
-      .catch(->(reason) { nil })
+    self.is_ready.then(->(backend_available) {
+      unless backend_available == true
+        raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?)")
+      end
+      delta_time = Time.now
+      bucket_is_online = MinIO.is_bucket_available(@config).wait
+      delta_time = Time.now - delta_time
+      bucket_is_online \
+        ? delta_time * 1000 # latency in milliseconds
+        : nil
+    })
+    .catch(->(reason) { nil })
   end
 
   # Retrieves object metadata by its ID
+  # @param id [StorageObjectId] id of the object to retrieve the metadata of
   # @return [AsyncPromise<StorageObjectMetadata>]
   def get_object_metadata(id)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
@@ -179,13 +180,13 @@ class S3BackendSocket < StorageBackendSocket
 
     AsyncPromise.race([
       AsyncPromise.timeout(nil, timeout, reject: "Timeout when retrieve metadata for object #{id}"),
-      is_ready.then(->(backend_available) {
+      self.is_ready.then(->(backend_available) {
         unless backend_available == true
-          raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+          raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}")
         end
         response = async_fetch(url, method: "GET", headers: headers, timeout: timeout).wait
         unless response.is_a?(Net::HTTPSuccess)
-          raise BackendNetworkError, "Failed to retrieve metadata for object #{id}"
+          raise BackendNetworkError.new("Failed to retrieve metadata for object #{id}")
         end
         # extract object size and creation date from xml response body
         size = response.body.match(/<ObjectSize>(\d+)<\/ObjectSize>/)[1].to_i
@@ -206,14 +207,14 @@ class S3BackendSocket < StorageBackendSocket
 
     AsyncPromise.race([
       AsyncPromise.timeout(nil, timeout, reject: "Timeout when approving metadata for object #{id}"),
-      is_ready.then(->(backend_available) {
+      self.is_ready.then(->(backend_available) {
         unless backend_available == true
-          raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+          raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}")
         end
         response = async_fetch(url, method: "HEAD", headers: headers, timeout: timeout).wait
         # Object already exists if HEAD response is OK
         if response.is_a?(Net::HTTPSuccess)
-          raise BackendNetworkError, "The blob with the id \"#{id}\" already exists."
+          raise BackendNetworkError.new("The blob with the id \"#{id}\" already exists.")
         end
         true
       })
@@ -221,36 +222,39 @@ class S3BackendSocket < StorageBackendSocket
   end
 
   # Retrieves an object blob from the backend by its ID
+  # @param id [StorageObjectId] id of the object to retrieve
   def get_object(id)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
     pathname = "/#{bucket}/#{id}"
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "GET")
     url = "http://#{host}#{pathname}"
-    is_ready.then(->(backend_available) {
+    self.is_ready.then(->(backend_available) {
       unless backend_available == true
-        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+        raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}")
       end
       response = async_fetch(url, method: "GET", headers: headers, timeout: timeout).wait
       unless response.is_a?(Net::HTTPSuccess)
-        raise BackendNetworkError, "Failed to retrieve object #{id}"
+        raise BackendNetworkError.new("Failed to retrieve object #{id}")
       end
       response.body # returning the raw body (blob)
     })
   end
 
   # Stores an object blob in the backend by its ID
+  # @param id [StorageObjectId] id of the object to store
+  # @param data [String] the binary data (as a string) to store
   def set_object(id, data)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
     pathname = "/#{bucket}/#{id}"
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "PUT")
     url = "http://#{host}#{pathname}"
-    is_ready.then(->(backend_available) {
+    self.is_ready.then(->(backend_available) {
       unless backend_available == true
-        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+        raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}")
       end
       response = async_fetch(url, method: "PUT", body: data, headers: headers, timeout: timeout).wait
       unless response.is_a?(Net::HTTPSuccess)
-        raise BackendNetworkError, "Failed to store object #{id}"
+        raise BackendNetworkError.new("Failed to store object #{id}")
       end
       get_object_metadata(id).wait # return metadata after storing the object
     })
@@ -258,6 +262,7 @@ class S3BackendSocket < StorageBackendSocket
 
   # Deletes an object blob in the backend by its ID
   # used only for testing purposes
+  # @param id [StorageObjectId] id of the object to delete
   # @return [AsyncPromise<Boolean>] The promise specifies whether or not the item existed before deleting
   # TODO: for now, there is no distinction between non-existing deleted item vs existing item's deletion
   def del_object(id)
@@ -265,14 +270,14 @@ class S3BackendSocket < StorageBackendSocket
     pathname = "/#{bucket}/#{id}"
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "DELETE")
     url = "http://#{host}#{pathname}"
-    is_ready.then(->(backend_available) {
+    self.is_ready.then(->(backend_available) {
       unless backend_available == true
-        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+        raise BackendNetworkError.new("Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}")
       end
       response = async_fetch(url, method: "DELETE", headers: headers, timeout: timeout).wait
       return true if response.code == "204"
       unless response.is_a?(Net::HTTPSuccess)
-        raise BackendNetworkError, "Failed to carry out delete operation on object #{id}"
+        raise BackendNetworkError.new("Failed to carry out delete operation on object #{id}")
       end
     })
   end
