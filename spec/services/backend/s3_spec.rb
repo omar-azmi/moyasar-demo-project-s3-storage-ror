@@ -31,7 +31,7 @@ RSpec.describe S3BackendSocket do
     MinIO.shutdown().wait()
     # @type [S3BackendSocket]
     socket = S3BackendSocket.new(working_config)
-    new_object_id = "temp/hello-world.txt"
+    new_object_id = "temp/hello world.txt"
     new_object_data = "Hello World!!"
 
     describe "S3BackendSocket.init" do
@@ -100,7 +100,7 @@ RSpec.describe S3BackendSocket do
       it "closes minio server and flicks socket.is_ready an new rejected promise" do
         Async do
           expect { socket.close().wait }.to_not raise_error()
-          expect { socket.is_ready().wait }.to raise_error("MinIO server has been shut down.")
+          expect { socket.is_ready().wait }.to raise_error("MinIO server has been closed.")
         end
       end
     end

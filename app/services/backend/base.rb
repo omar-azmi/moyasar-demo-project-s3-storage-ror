@@ -99,7 +99,7 @@ StorageObjectId = String
 StorageObjectData = String # or Binary/IO, depending on how the data will be handled
 
 # Metadata for storage objects
-class StorageObjectMetadata
+class StorageObjectMetadata < Struct.new(:id, :size, :created_at)
   # @return [StorageObjectId] the ID of the object being referenced
   attr_accessor :id
 
@@ -112,9 +112,9 @@ class StorageObjectMetadata
   # @param id [StorageObjectId] the ID of the object being referenced
   # @param size [Integer] The size of the object in bytes
   # @param created_at [Integer] The epoch UTC time of object creation, relative to storage server's time of full data acquisition
-  def initialize(id:, size:, created_at:)
-    @id = id
-    @size = size
-    @created_at = created_at
-  end
+  # def initialize(id:, size:, created_at:)
+  #   @id = id
+  #   @size = size
+  #   @created_at = created_at
+  # end
 end

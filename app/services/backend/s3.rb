@@ -76,7 +76,7 @@ module MinIO
   def is_bucket_available(config = DEFAULT_S3_CONFIG)
     # similar to object destructuring in javascript
     config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}"
+    pathname = escape_url_component("/#{bucket}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "HEAD", headers: { "x-amz-expected-bucket-owner" => access_key })
     url = "http://#{host}#{pathname}"
     # @type [AsyncPromise<Boolean>]
@@ -147,7 +147,7 @@ class S3BackendSocket < StorageBackendSocket
   # @return [AsyncPromise<void>]
   def close
     AsyncPromise.resolve().then(->(_) {
-      self.is_ready = AsyncPromise.reject("MinIO server has been shut down.")
+      self.is_ready = AsyncPromise.reject("MinIO server has been closed.")
       MinIO.shutdown().wait
     })
   end
@@ -174,7 +174,7 @@ class S3BackendSocket < StorageBackendSocket
   # @return [AsyncPromise<StorageObjectMetadata>]
   def get_object_metadata(id)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}/#{id}"
+    pathname = escape_url_component("/#{bucket}/#{id}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "GET", query: "attributes=", headers: { "x-amz-object-attributes" => "ObjectSize" })
     url = "http://#{host}#{pathname}?attributes"
 
@@ -201,7 +201,7 @@ class S3BackendSocket < StorageBackendSocket
   def approve_object_metadata(stats)
     stats => {id:, size:}
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}/#{id}"
+    pathname = escape_url_component("/#{bucket}/#{id}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "HEAD")
     url = "http://#{host}#{pathname}"
 
@@ -225,7 +225,7 @@ class S3BackendSocket < StorageBackendSocket
   # @param id [StorageObjectId] id of the object to retrieve
   def get_object(id)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}/#{id}"
+    pathname = escape_url_component("/#{bucket}/#{id}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "GET")
     url = "http://#{host}#{pathname}"
     self.is_ready.then(->(backend_available) {
@@ -245,7 +245,7 @@ class S3BackendSocket < StorageBackendSocket
   # @param data [String] the binary data (as a string) to store
   def set_object(id, data)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}/#{id}"
+    pathname = escape_url_component("/#{bucket}/#{id}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "PUT")
     url = "http://#{host}#{pathname}"
     self.is_ready.then(->(backend_available) {
@@ -267,7 +267,7 @@ class S3BackendSocket < StorageBackendSocket
   # TODO: for now, there is no distinction between non-existing deleted item vs existing item's deletion
   def del_object(id)
     @config => {host:, bucket:, access_key:, secret_key:, timeout:}
-    pathname = "/#{bucket}/#{id}"
+    pathname = escape_url_component("/#{bucket}/#{id}")
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "DELETE")
     url = "http://#{host}#{pathname}"
     self.is_ready.then(->(backend_available) {

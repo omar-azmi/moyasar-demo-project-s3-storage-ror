@@ -1,6 +1,7 @@
 {
 	"recommendations": [
 		"denoland.vscode-deno",
-		"castwide.solargraph"
+    "castwide.solargraph",
+    "qwtel.sqlite-viewer"
 	]
 }

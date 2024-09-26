@@ -56,7 +56,7 @@ end
 
 
 # The writable object that the server's storage frontend expects from the client (in json encoding).
-class StorageObjectWriteJson
+class StorageObjectWriteJson < Struct.new(:id, :data)
   # sanity checks made:
   # - the storage fronted ({@link StorageFrontend}) must check its metadata table to ensure that this id does not already exist in any backends.
   # @return [StorageObjectId] the ID of the object being stored
@@ -70,14 +70,14 @@ class StorageObjectWriteJson
 
   # @param id [StorageObjectId] the ID of the object being stored
   # @param data [StorageObjectData64] The binary data to store in base64 encoding
-  def initialize(id:, data:)
-    @id = id
-    @data = data
-  end
+  # def initialize(id:, data:)
+  #   @id = id
+  #   @data = data
+  # end
 end
 
 # The readable object that the client receives from the server's frontend storage (in json encoding).
-class StorageObjectReadJson < StorageObjectWriteJson
+class StorageObjectReadJson < Struct.new(:id, :size, :created_at, :data)
   # @return [StorageObjectId] the ID of the object being referenced
   attr_accessor :id
 
@@ -95,12 +95,12 @@ class StorageObjectReadJson < StorageObjectWriteJson
   # @param size [Integer] The size of the object in bytes
   # @param created_at [Integer] The epoch UTC time of object creation, relative to storage server's time of full data acquisition
   # @param data [StorageObjectData64] The binary data to stored in the backend in base64 encoding
-  def initialize(id:, size:, created_at:, data:)
-    @id = id
-    @size = size
-    @created_at = created_at
-    @data = data
-  end
+  # def initialize(id:, size:, created_at:, data:)
+  #   @id = id
+  #   @size = size
+  #   @created_at = created_at
+  #   @data = data
+  # end
 end
 
 # The base64-encoded version of StorageObjectData, embeddable in JSON

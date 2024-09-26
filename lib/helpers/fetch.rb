@@ -31,6 +31,11 @@ def async_fetch(url, method: "GET", headers: {}, body: nil, timeout: 60)
   })
 end
 
+# use `URI::Parser.new().escape` to perform url-escaping of any weird characters
+def escape_url_component(url_component)
+  URI::Parser.new().escape(url_component)
+end
+
 # Helper function to build http requests of various http-methods, and also assign headers
 def build_http_request(uri, method, headers, body)
   request = nil
