@@ -1,10 +1,10 @@
 require "async"
-require "async"
 require "rake"
 require "net/http"
 require "uri"
 require "./lib/helpers/async_promise"
 require "./lib/helpers/s3_signer"
+require "./lib/helpers/fetch"
 require_relative "./base"
 
 # Configuration for S3 backend socket
@@ -40,6 +40,7 @@ DEFAULT_S3_CONFIG = S3BackendSocketConfig.new(
   5.0,
 )
 
+# A module for managing the state of minio server more conveniently.
 module MinIO
   extend self
 
@@ -77,17 +78,14 @@ module MinIO
     config => {host:, bucket:, access_key:, secret_key:, timeout:}
     pathname = "/#{bucket}"
     headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "HEAD", headers: { "x-amz-expected-bucket-owner" => access_key })
-    bucket_uri = URI.parse("http://#{host}#{pathname}")
+    url = "http://#{host}#{pathname}"
     # @type [AsyncPromise<Boolean>]
-    promise = AsyncPromise.resolve(bucket_uri).then(->(uri) {
+    promise = AsyncPromise.resolve().then(->(_) {
+      uri = URI.parse(url)
       response = nil
       begin
-        # initiate the HTTP request
-        response = Net::HTTP.start(uri.host, uri.port, open_timeout: timeout, read_timeout: 5) do |http|
-          request = Net::HTTP::Head.new(uri)
-          headers.each { |key, value| request[key] = value }
-          http.request(request)
-        end
+        # initiate the http request
+        response = async_fetch(url, method: "HEAD", headers: headers, timeout: timeout).wait
 
       # Rename connection refused error (i.e. closed-host or if the service is down)
       rescue Errno::ECONNREFUSED, SocketError => details
@@ -106,5 +104,176 @@ module MinIO
       end
     })
     promise
+  end
+end
+
+
+# S3BackendSocket class inherits from StorageBackendSocket
+class S3BackendSocket < StorageBackendSocket
+  # attr_accessor :is_ready # inherited
+
+  # @param config [S3BackendSocketConfig] the config for communicating with our minio server's bucket
+  def initialize(config = {})
+    super()
+    config = config.is_a?(S3BackendSocketConfig) ? config.to_h() : config
+    # @type [S3BackendSocketConfig]
+    @config = DEFAULT_S3_CONFIG.to_h.merge(config)
+    # @type [AsyncPromise<true>]
+    @is_ready = AsyncPromise.new()
+    self.init()
+  end
+
+  # Initializes the minio backend server, and flicks `is_ready` promise to a resolved state when server booting is successful.
+  # @return [AsyncPromise<void>]
+  def init
+    @is_ready = AsyncPromise.new()
+    AsyncPromise.resolve().then(->(_) {
+      begin
+        MinIO.bootup().wait
+        MinIO.is_bucket_available(@config).wait
+        @is_ready.resolve(true)
+      rescue StandardError => reason
+        @is_ready.reject(BackendNetworkError.new("Failed to initialize: #{reason.message}"))
+      end
+    })
+  end
+
+  # No operation needed for for backups, since minio handles it itself
+  # @return [AsyncPromise<void>]
+  def backup
+    AsyncPromise.resolve()
+  end
+
+  # Closes the minio backend server
+  # @return [AsyncPromise<void>]
+  def close
+    AsyncPromise.resolve().then(->(_) {
+      @is_ready = AsyncPromise.reject("MinIO server has been shut down.")
+      MinIO.shutdown().wait
+    })
+  end
+
+  # Checks if the minio backend server is online, and returns a promise for the latency in  milliseconds
+  # @return [AsyncPromise<nil, Float>]
+  def is_online
+    AsyncPromise.resolve()
+      .then(->(_) {
+        is_ready.wait
+        delta_time = Time.now
+        bucket_is_online = MinIO.is_bucket_available(@config).wait
+        delta_time = Time.now - delta_time
+        bucket_is_online \
+          ? delta_time * 1000 # latency in milliseconds
+          : nil
+      })
+      .catch(->(reason) { nil })
+  end
+
+  # Retrieves object metadata by its ID
+  # @return [AsyncPromise<StorageObjectMetadata>]
+  def get_object_metadata(id)
+    @config => {host:, bucket:, access_key:, secret_key:, timeout:}
+    pathname = "/#{bucket}/#{id}"
+    headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "GET", query: "attributes=", headers: { "x-amz-object-attributes" => "ObjectSize" })
+    url = "http://#{host}#{pathname}?attributes"
+
+    AsyncPromise.race([
+      AsyncPromise.timeout(nil, timeout, reject: "Timeout when retrieve metadata for object #{id}"),
+      is_ready.then(->(backend_available) {
+        unless backend_available == true
+          raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+        end
+        response = async_fetch(url, method: "GET", headers: headers, timeout: timeout).wait
+        unless response.is_a?(Net::HTTPSuccess)
+          raise BackendNetworkError, "Failed to retrieve metadata for object #{id}"
+        end
+        # extract object size and creation date from xml response body
+        size = response.body.match(/<ObjectSize>(\d+)<\/ObjectSize>/)[1].to_i
+        last_modified = response["last-modified"]
+        created_at = Time.parse(last_modified).to_i * 1000
+        { id: id, size: size, created_at: created_at }
+      })
+    ])
+  end
+
+  # Checks if the backend approves storing the object based on metadata
+  def approve_object_metadata(stats)
+    stats => {id:, size:}
+    @config => {host:, bucket:, access_key:, secret_key:, timeout:}
+    pathname = "/#{bucket}/#{id}"
+    headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "HEAD")
+    url = "http://#{host}#{pathname}"
+
+    AsyncPromise.race([
+      AsyncPromise.timeout(nil, timeout, reject: "Timeout when approving metadata for object #{id}"),
+      is_ready.then(->(backend_available) {
+        unless backend_available == true
+          raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+        end
+        response = async_fetch(url, method: "HEAD", headers: headers, timeout: timeout).wait
+        # Object already exists if HEAD response is OK
+        if response.is_a?(Net::HTTPSuccess)
+          raise BackendNetworkError, "The blob with the id \"#{id}\" already exists."
+        end
+        true
+      })
+    ])
+  end
+
+  # Retrieves an object blob from the backend by its ID
+  def get_object(id)
+    @config => {host:, bucket:, access_key:, secret_key:, timeout:}
+    pathname = "/#{bucket}/#{id}"
+    headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "GET")
+    url = "http://#{host}#{pathname}"
+    is_ready.then(->(backend_available) {
+      unless backend_available == true
+        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+      end
+      response = async_fetch(url, method: "GET", headers: headers, timeout: timeout).wait
+      unless response.is_a?(Net::HTTPSuccess)
+        raise BackendNetworkError, "Failed to retrieve object #{id}"
+      end
+      response.body # returning the raw body (blob)
+    })
+  end
+
+  # Stores an object blob in the backend by its ID
+  def set_object(id, data)
+    @config => {host:, bucket:, access_key:, secret_key:, timeout:}
+    pathname = "/#{bucket}/#{id}"
+    headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "PUT")
+    url = "http://#{host}#{pathname}"
+    is_ready.then(->(backend_available) {
+      unless backend_available == true
+        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+      end
+      response = async_fetch(url, method: "PUT", body: data, headers: headers, timeout: timeout).wait
+      unless response.is_a?(Net::HTTPSuccess)
+        raise BackendNetworkError, "Failed to store object #{id}"
+      end
+      get_object_metadata(id).wait # return metadata after storing the object
+    })
+  end
+
+  # Deletes an object blob in the backend by its ID
+  # used only for testing purposes
+  # @return [AsyncPromise<Boolean>] The promise specifies whether or not the item existed before deleting
+  # TODO: for now, there is no distinction between non-existing deleted item vs existing item's deletion
+  def del_object(id)
+    @config => {host:, bucket:, access_key:, secret_key:, timeout:}
+    pathname = "/#{bucket}/#{id}"
+    headers = S3Signer.get_signed_headers(host, pathname, access_key, secret_key, method: "DELETE")
+    url = "http://#{host}#{pathname}"
+    is_ready.then(->(backend_available) {
+      unless backend_available == true
+        raise BackendNetworkError, "Backend can connect, but is not available for requests (possibly wrong url?). Failed to retrieve metadata for object #{id}"
+      end
+      response = async_fetch(url, method: "DELETE", headers: headers, timeout: timeout).wait
+      return true if response.code == "204"
+      unless response.is_a?(Net::HTTPSuccess)
+        raise BackendNetworkError, "Failed to carry out delete operation on object #{id}"
+      end
+    })
   end
 end

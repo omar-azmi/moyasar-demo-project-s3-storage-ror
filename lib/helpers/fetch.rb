@@ -39,6 +39,8 @@ def build_http_request(uri, method, headers, body)
     request = Net::HTTP::Get.new(uri)
   when "HEAD"
     request = Net::HTTP::Head.new(uri)
+  when "DELETE"
+    request = Net::HTTP::Delete.new(uri)
   when "POST"
     request = Net::HTTP::Post.new(uri)
     request.body = body if body
