@@ -50,19 +50,20 @@ class AsyncPromise < Async::Variable
   end
 
   # Create a new AsyncPromise that resolves when all of its input promises have been resolved, and rejects when any single input promise is rejected.
-  # @param promises [Array<[T, AsyncPromise<T>]>] Provide all of the input AsyncPromise<T> to wait for, in order to resolve.
+  # @param promises [Array<[T, AsyncPromise<T>]>] Provide all of the input T or AsyncPromise<T> to wait for, in order to resolve.
   # return [AsyncPromise<Array<T>>] Returns a Promise which, when resolved, contains the array of all resolved values.
   # TODO: create unit test
   def self.all(promises = [])
     # we must return early on if no promises we given, since nothing will then resolve the new_promise.
     return self.resolve([]) if promises.empty?
-
-    new_promise = new()
+    # next, we make sure that all values within the `promises` array are actual `AsyncPromise`s. the ones that aren't, are converted to a resolved promise.
+    promises = promises.map { |p| p.is_a?(AsyncPromise) ? p : self.resolve(p) }
     resolved_values = []
     remaining_promises = promises.length
+    new_promise = new()
 
     # The following may not be the prettiest implementation. TODO: consider if you can use a Array.map for this function
-    promises.each_with_index do |promise, index|
+    promises.each_with_index { |promise, index|
       promise.then(->(value) {
         resolved_values[index] = value
         remaining_promises -= 1
@@ -75,11 +76,56 @@ class AsyncPromise < Async::Variable
         # i.e. its order can vary from time to time, possibly resulting in different kinds of rejection reasons
         new_promise.reject(reason)
       })
-    end
+    }
     new_promise
   end
 
   # TODO: implement `AsyncPromise.allSettled` static method
+
+  # Create a new AsyncPromise that either rejects or resolves based on whichever encompassing promise settles first.
+  # The value it either resolves or rejects with, will be inherited by the promise that wins the race.
+  # @param promises [Array<[T, AsyncPromise<T>]>] Provide all of the input AsyncPromise<T> to wait for, in order to resolve.
+  # return [AsyncPromise<Array<T>>] Returns a Promise which, when resolved, contains the array of all resolved values.
+  def self.race(promises)
+    # if any of the promises happens to be a regular value (i.e. not an AsyncPromise), then we will just return that (whichever one that we encounter first)
+    promises.each { |p|
+      unless p.is_a?(AsyncPromise)
+        return self.resolve(p)
+      end
+    }
+    new_promise = new()
+    # in the racing condition, there is no need to check if `new_promise` was already settled, because the `resolve` and `reject` methods already ignore requests made after the resolve/reject.
+    # thus it is ok for our each loop to mindlessly and rapidly call `new_promise.resolve` and `new_promise.reject` with no consequences (might affect performance? probably just a micro optimization).
+    promises.each { |promise|
+      promise.then(
+        ->(value) { new_promise.resolve(value) },
+        ->(reason) { new_promise.reject(reason) },
+      )
+    }
+    new_promise
+  end
+
+  # Create a promise that either resolves or rejects after a given timeout.
+  # @param resolve_in [Float, nil] The time in seconds to wait before resolving with keyword-value `resolve` (if provided).
+  # @param reject_in [Float, nil] The time in seconds to wait before rejecting with keyword-reason `reject` (if provided).
+  # @param resolve [Any] The value to resolve with after `resolve_in` seconds.
+  # @param reject [String, StandardError] The reason to reject after `reject_in` seconds.
+  def self.timeout(resolve_in = nil, reject_in = nil, resolve: nil, reject: "AsyncPromise timeout")
+    new_promise = new
+    # if both timers are `nil`, then we will just return a never resolving promise (at least not from here. but it can be resolved externally)
+    return new_promise if resolve_in.nil? && reject_in.nil?
+    Async do
+      # determine the shorter timeout and take the action of either resolving or rejecting after the timeout
+      if (reject_in.nil?) || ((not resolve_in.nil?) && (resolve_in <= reject_in))
+        sleep(resolve_in)
+        new_promise.resolve(resolve)
+      else
+        sleep(reject_in)
+        new_promise.reject(reject)
+      end
+    end
+    new_promise
+  end
 
   # Resolve the value of this AsyncPromise node.
   # @param value [T, AsyncPromise<T>] Generic value of type `T`.

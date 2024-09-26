@@ -253,6 +253,16 @@ RSpec.describe AsyncPromise do
         end
       end
 
+      it "handles a mixture of regular non-promise values and actual promises" do
+        Async do
+          p1 = AsyncPromise.resolve("Value 1").then(->(v) { sleep 0.3; v })
+          p2 = AsyncPromise.resolve("Value 2").then(->(v) { sleep 0.1; v })
+          v3 = "Value 3"
+          p4 = AsyncPromise.all([ p1, p2, v3 ])
+          expect(p4.wait).to eq([ "Value 1", "Value 2", "Value 3" ])
+        end
+      end
+
       it "handles already resolved promises in .all" do
         result = nil
         Async do
@@ -275,6 +285,151 @@ RSpec.describe AsyncPromise do
           expect(rejection_reason).to eq("Immediate Rejection") # the value should be rejected, even before we begin to wait
           expect { p4.wait }.to raise_error("Immediate Rejection")
         end
+      end
+    end
+
+    describe "AsyncPromise.race" do
+      it "resolves with the first resolved promise in the race" do
+        delta_time = Time.now
+        Async do
+          p1 = AsyncPromise.resolve("First resolved late").then(->(v) { sleep 0.5; v })
+          p2 = AsyncPromise.resolve("Second won").then(->(v) { sleep 0.2; v })
+          p3 = AsyncPromise.reject("Third failed later").catch(->(e) { sleep 0.7; e })
+          p4 = AsyncPromise.race([ p1, p2, p3 ])
+          expect(p4.wait).to eq("Second won")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "rejects with the first rejected promise in the race" do
+        delta_time = Time.now
+        Async do
+          p1 = AsyncPromise.resolve("First won very late").then(->(v) { sleep 0.7; v })
+          p2 = AsyncPromise.resolve("Second won later").then(->(v) { sleep 0.5; v })
+          p3 = AsyncPromise.reject("Third failed first").catch(->(e) { sleep 0.2; raise e })
+          p4 = AsyncPromise.race([ p1, p2, p3 ])
+          expect { p4.wait }.to raise_error("Third failed first")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "immediately resolves if a non-promise object is passed, even if there exists resolved promises prior to it" do
+        delta_time = Time.now
+        result = nil
+        Async do
+          p1 = AsyncPromise.resolve("Resolved instantly")
+          p2 = AsyncPromise.reject("Rejected instantly")
+          p3 = AsyncPromise.resolve("Resolved later").then(->(v) { sleep 0.3; v })
+          v4 = "Not a Promise"
+          v5 = "A Second Non-Promise"
+          p6 = AsyncPromise.resolve("Resolved later").then(->(v) { sleep 0.5; v })
+          p7 = AsyncPromise.race([ p1, p2, p3, v4, v5, p6 ]).then(->(v) { result = v; v })
+          expect(result).to eq("Not a Promise") # the result is resolved even before we wait for the promise, because a non-promise promise was passed
+          expect(p7.wait).to eq("Not a Promise")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.0, 0.2).inclusive
+        end
+      end
+
+      it "immediately resolves if a pre-resolved promise is passed" do
+        delta_time = Time.now
+        result = nil
+        Async do
+          p1 = AsyncPromise.resolve("Resolved instantly")
+          p2 = AsyncPromise.resolve("Resolved later").then(->(v) { sleep 0.3; v })
+          p3 = AsyncPromise.race([ p1, p2 ]).then(->(v) { result = v; v })
+          expect(result).to eq("Resolved instantly") # the result is resolved even before we wait for the promise, because a pre-resolved promise was passed
+          expect(p3.wait).to eq("Resolved instantly")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.0, 0.2).inclusive
+        end
+      end
+
+      it "immediately rejects if a pre-rejected promise is passed" do
+        delta_time = Time.now
+        rejection_reason = nil
+        result = nil
+        Async do
+          p1 = AsyncPromise.reject("Rejected instantly")
+          p2 = AsyncPromise.resolve("Resolved later").then(->(v) { sleep 0.3; v })
+          p3 = AsyncPromise.race([ p1, p2 ]).then(->(v) { result = v; v }, ->(e) { rejection_reason = e; raise e })
+          expect(rejection_reason).to eq("Rejected instantly") # the result is rejected even before we wait for the promise, because a pre-resolved promise was passed
+          expect { p3.wait }.to raise_error("Rejected instantly")
+          expect(result).to be_nil()
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.0, 0.2).inclusive
+        end
+      end
+    end
+
+    describe "AsyncPromise.timeout" do
+      it "resolves after the specified resolve_in timeout" do
+        delta_time = Time.now
+        Async do
+          expect(AsyncPromise.timeout(0.2, resolve: "Resolved after timeout").wait).to eq("Resolved after timeout")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "rejects after the specified reject_in timeout" do
+        delta_time = Time.now
+        Async do
+          expect { AsyncPromise.timeout(nil, 0.2, reject: "Rejected after timeout").wait }.to raise_error("Rejected after timeout")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "resolves if `resolve_in` is shorter than `reject_in`" do
+        delta_time = Time.now
+        Async do
+          expect(AsyncPromise.timeout(0.2, 0.5, resolve: "Resolved first", reject: "Rejected second").wait).to eq("Resolved first")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "rejects if reject_in is shorter than resolve_in" do
+        delta_time = Time.now
+        Async do
+          expect { AsyncPromise.timeout(0.5, 0.2, resolve: "Resolved second", reject: "Rejected first").wait }.to raise_error("Rejected first")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.2, 0.4).inclusive
+        end
+      end
+
+      it "resolves immediately if resolve_in is zero" do
+        delta_time = Time.now
+        Async do
+          expect(AsyncPromise.timeout(0, resolve: "Resolved instantly").wait).to eq("Resolved instantly")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.0, 0.1).inclusive
+        end
+      end
+
+      it "rejects immediately if reject_in is zero" do
+        delta_time = Time.now
+        Async do
+          expect { AsyncPromise.timeout(nil, 0, reject: "Rejected instantly").wait }.to raise_error("Rejected instantly")
+          delta_time = Time.now - delta_time
+          expect(delta_time).to be_between(0.0, 0.1).inclusive
+        end
+      end
+
+      it "does nothing if neither `resolve_in` nor `reject_in` times are provided (hanging promise)." do
+        delta_time = Time.now
+        Async do
+          promise = AsyncPromise.timeout()
+          sleep 0.5
+          delta_time = Time.now - delta_time
+          expect(promise.status()).to eq("pending")
+          promise.resolve("End the cycle of hanging misery")
+          expect(promise.wait).to eq("End the cycle of hanging misery")
+        end
+        expect(delta_time).to be_between(0.5, 0.7).inclusive
       end
     end
   end
