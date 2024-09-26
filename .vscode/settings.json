@@ -24,5 +24,6 @@
 		"**/package.json"
 	],
 	"solargraph.formatting": true,
-	"editor.tabSize": 2
+  "editor.tabSize": 2,
+  "solargraph.useBundler": true
 }

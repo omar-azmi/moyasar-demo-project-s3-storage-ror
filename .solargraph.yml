@@ -2,18 +2,20 @@
 include:
 - "app/controllers/**/*.rb"
 - "app/services/**/*.rb"
-- "lib/helpers/**/*.rb"
-- "spec/helpers/**/*.rb"
+- "lib/helpers/*.rb"
+- "spec/helpers/*.rb"
 - "spec/services/**/*.rb"
 exclude:
+- "temp/**/*"
 - "test/**/*"
 - "vendor/**/*"
 - ".bundle/**/*"
 require: []
 domains: []
 reporters:
-- rubocop
-- require_not_found
+- "typecheck"
+- "rubocop"
+- "require_not_found"
 formatter:
   rubocop:
     cops: safe
