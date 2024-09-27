@@ -9,6 +9,7 @@ class StatelessFrontendSocket < StorageFrontendSocket
   # Initialize the frontend storage, managing multiple backend storage sockets.
   # @param backend_sockets [Array<StorageBackendSocket>] The backend storage sockets to manage.
   def initialize(backend_sockets)
+    super()
     @sockets = backend_sockets
     self.is_ready = AsyncPromise.new()
     self.init()
@@ -56,26 +57,27 @@ class StatelessFrontendSocket < StorageFrontendSocket
   # Read an object from the storage.
   # It will search through all backend sockets to find the object.
   # @param id [String] The ID of the object to read.
+  # @param sockets [Array<Integer>] The indexes of sockets to try reading the `id` from concurrently.
+  #        By default, it is the index of all available sockets.
   # @return [AsyncPromise<[nil, StorageObjectReadJson]>]
-  def read_object(id)
-    read_promises = @sockets.map do |socket|
-      socket.get_object_metadata(id)
-        .then(->(metadata) {
-          socket.get_object(id)
-            .then(->(data) {
-              StorageObjectReadJson.new(
-                id: metadata[:id],
-                size: metadata[:size],
-                created_at: metadata[:created_at],
-                data: Base64.encode64(data),
-              )
-            })
+  def read_object(id, sockets: nil)
+    sockets = sockets || [ *(0...(@sockets.length)) ]
+    read_promises = sockets.map do |index|
+      socket = @sockets[index]
+      socket.get_object_metadata(id).then(->(metadata) {
+        socket.get_object(id).then(->(data) {
+          StorageObjectReadJson.new(
+            id: metadata[:id],
+            size: metadata[:size],
+            created_at: metadata[:created_at],
+            data: Base64.strict_encode64(data),
+          )
         })
-        .catch(->(_) { nil })
+      }).catch(->(_) { nil })
     end
 
-    AsyncPromise.all(read_promises)
-      .then(->(results) {
+    self.is_ready.then(->(_) {
+      AsyncPromise.all(read_promises).then(->(results) {
         # return the first non nil result
         results.each { |result|
           return result unless result.nil?
@@ -84,33 +86,46 @@ class StatelessFrontendSocket < StorageFrontendSocket
         puts FrontendNetworkError.new("Object not found in any backend")
         nil
       })
+    })
   end
 
   # Write an object to a randomly picked backend socket (which must be online).
   # @param payload [StorageObjectWriteJson] The payload of the object data that needs to be stored.
-  # @return [AsyncPromise<Boolean>]
-  def write_object(payload)
-    AsyncPromise.resolve().then(->(_) {
+  # @param sockets [Array<Integer>] The indexes of sockets to pick from to store the payload.
+  #        If one is unavailable, the next one will be tried.
+  #        By default, it shuffles the indexes of all available sockets, and then tries each for storage.
+  # @return [AsyncPromise<Integer>] the return value reflects which backend socket took in our data. it will be `-1` if the writing was unsuccessful.
+  def write_object(payload, sockets: nil)
+    sockets = sockets || [ *(0...(@sockets.length)) ].shuffle()
+    self.is_ready.then(->(_) {
       # we first create a shuffled version of our sockets array,
       # and then we synchronously check if each socket is online and ready to take the data.
       # if the first backend that is online AND refuses to accept the data/id, then it means that the id is already registered and cannot be updated
-      # in such case, we will terminate any further checks and return a `false`.
-      # otherwise the first online socket accepts the data, then we may send it that data and finally return a `true`
+      # in such case, we will terminate any further checks and return a `-1`.
+      # otherwise the first online socket accepts the data, then we may send it that data and finally return the `index` of the storage
       data_blob = nil # for caching the blob data in case we decode the base64 encoded data at some point
-      @sockets.shuffle().each do |socket|
+      sockets.each do |index|
+        socket = @sockets[index]
         unless (socket.is_online().wait() rescue nil).nil?
-          data_blob = data_blob.nil? ? Base64.decode64(payload["data"]) : data_blob
+          if data_blob.nil?
+            begin data_blob = Base64.strict_decode64(payload["data"])
+            rescue
+              puts FrontendNetworkError.new("The given id \"#{payload["id"]}\" in the payload is already stored.")
+              return -1
+            end
+          end
+
           socket_approval = socket.approve_object_metadata({ id: payload["id"], size: data_blob.bytesize }).wait() rescue false
           if socket_approval == true
             socket.set_object(payload["id"], data_blob).wait()
-            return true
+            return index
           end
           puts FrontendNetworkError.new("The given id \"#{payload["id"]}\" in the payload is already stored.")
-          return false
+          return -1
         end
       end
       puts FrontendNetworkError.new("No backend is currently online to store payload with id: \"#{payload["id"]}\".")
-      false
+      -1
     })
   end
 end

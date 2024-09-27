@@ -53,10 +53,10 @@ RSpec.describe StatelessFrontendSocket do
     "File 8\nTwo Lines!!",
     "File 9\nSecond Line\nThree Lines!!"
   ]
-  new_object_payloads = [ *(0..(new_object_ids.length - 1)) ].map { |i|
+  new_object_payloads = [ *(0...(new_object_ids.length)) ].map { |i|
     payload = {
       "id" => new_object_ids[i],
-      "data" => Base64.encode64(new_object_datas[i])
+      "data" => Base64.strict_encode64(new_object_datas[i])
     }
     payload
   }
@@ -90,7 +90,7 @@ RSpec.describe StatelessFrontendSocket do
       it "writes the data of three objects asynchronously" do
         Async do
           promises = new_object_payloads.map { |payload|
-            frontend.write_object(payload)
+            frontend.write_object(payload).then(->(socket_index) { socket_index >= 0 })
           }
           expect(AsyncPromise.all(promises).wait).to eq(Array.new(promises.length, true))
         end
@@ -100,7 +100,7 @@ RSpec.describe StatelessFrontendSocket do
       it "refuses to insert data for existing ids" do
         Async do
           promises = new_object_payloads.map { |payload|
-            frontend.write_object(payload)
+            frontend.write_object(payload).then(->(socket_index) { socket_index >= 0 })
           }
           expect(AsyncPromise.all(promises).wait).to eq(Array.new(promises.length, false))
         end
@@ -115,7 +115,7 @@ RSpec.describe StatelessFrontendSocket do
               response => {id:, size:, created_at:, data:}
               expect(size).to be_a(Numeric)
               expect(created_at).to be_a(Numeric)
-              
+
               id == payload["id"] and data == payload["data"]
             })
           }
@@ -173,7 +173,7 @@ RSpec.describe StatelessFrontendSocket do
               response => {id:, size:, created_at:, data:}
               expect(size).to be_a(Numeric)
               expect(created_at).to be_a(Numeric)
-              
+
               id == payload["id"] and data == payload["data"]
             })
           }
