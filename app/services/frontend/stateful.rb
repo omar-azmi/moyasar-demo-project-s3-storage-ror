@@ -45,10 +45,9 @@ class StatefulFrontendSocket < StatelessFrontendSocket
     @db = nil
     config = config.is_a?(StatefulFrontendSocketConfig) ? config.to_h : config
     @config = DEFAULT__FRONTEND_DB_CONFIG.to_h.merge(config)
-    if @config.aliases.length != @sockets.length
+    if @config[:aliases].length != @sockets.length
       raise FrontendNetworkError.new("The number of backend sockets provided and the number of aliases/names give to assign to them are not equal.")
     end
-    self.is_ready = AsyncPromise.new()
     self.init()
   end
 
@@ -66,7 +65,7 @@ class StatefulFrontendSocket < StatelessFrontendSocket
             CREATE TABLE IF NOT EXISTS #{name} (
               id TEXT PRIMARY KEY, -- the id of the stored object (also the primary key)
               backend TEXT,        -- the alias of the backend it is stored in
-              bearer TEXT,         -- the owner of the data. use an empty string "" for public data
+              bearer TEXT          -- the owner of the data. use an empty string "" for public data
             );
           SQL
         rescue StandardError => reason
@@ -110,7 +109,7 @@ class StatefulFrontendSocket < StatelessFrontendSocket
     @config => {name:, aliases:}
     self.is_ready.then(->(_) {
       # @type [Array<Array<Any>>]
-      records = @db.execute("SELECT id, backend, bearer FROM #{name} WHERE id = ?", [ id ])
+      records = @db.execute("SELECT backend, bearer FROM #{name} WHERE id = ?", [ id ])
       if records.empty?
         puts FrontendNetworkError.new("Record for id \"#{id}\" does not exist")
         return nil
@@ -150,7 +149,7 @@ class StatefulFrontendSocket < StatelessFrontendSocket
       # @type [Array<Array<Any>>]
       unless @db.execute("SELECT id FROM #{name} WHERE id = ?", [ id ]).empty?
         puts FrontendNetworkError.new("The record with id #{id} already exists.")
-        false
+        return -1
       end
       # next, we randomly pick a backend to store our payload, ask it if it is online, then ask it to for approval of the payload.
       # if the process does not succeed, we move to the next backend.
@@ -163,6 +162,7 @@ class StatefulFrontendSocket < StatelessFrontendSocket
       backend_alias = aliases[backend_index]
       # inserting the data record into the database table
       @db.execute("INSERT INTO #{name} (id, backend, bearer) VALUES (?, ?, ?)", [ id, backend_alias, bearer ])
+      backend_index
     })
   end
 

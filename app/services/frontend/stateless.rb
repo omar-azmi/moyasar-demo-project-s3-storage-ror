@@ -12,7 +12,10 @@ class StatelessFrontendSocket < StorageFrontendSocket
     super()
     @sockets = backend_sockets
     self.is_ready = AsyncPromise.new()
-    self.init()
+    # TODO: this currently requires manual initialization, because otherwise auto initialization breaks the StatefulFrontendSocket subclass.
+    #       find a better way of managing auto initialization, or maybe ditch it and always require manual initialization.
+    # StatelessFrontendSocket.instance_method(:init).bind(self).call()
+    # self.init()
   end
 
   # Initialize all backend storage sockets and ensure they are ready.

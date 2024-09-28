@@ -228,10 +228,10 @@ class AsyncPromise < Async::Variable
   # @raise [String, StandardError] The error/reason for the rejection of this Promise.
   def wait
     value = self.async_wait()
-    unless @reason.nil?
-      # if an error had existed for this promise, then we shall raise it now.
-      raise @reason
-    end
+    # if an error had existed for this promise, then we shall raise it now.
+    raise @reason unless @reason.nil?
+    # if `value` is a promise object, then we will have to await for it to resolve
+    return value.wait() if value.is_a?(AsyncPromise)
     value
   end
 
