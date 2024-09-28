@@ -7,4 +7,8 @@ Rails.application.routes.draw do
 
   # Defines the root path route ("/")
   # root "posts#index"
+
+  # Routing config for blobs GET and POST api
+  get "v1/blobs/:id", to: "v1/blobs#show"
+  post "v1/blobs", to: "v1/blobs#create"
 end
